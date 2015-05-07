@@ -3,6 +3,7 @@
 
 #include "ofMain.h"
 #include <opencv2/opencv.hpp>
+#include <opencv2/gpu/gpu.hpp>
 
 typedef cv::Ptr<cv::Mat> cvImg;
 
@@ -56,6 +57,8 @@ public:
 private:
 	void update();
 	void drawCheckers(int x, int y, int w, int h);
+	ofTexture matToOfTexture(cv::Mat* m);
+	ofTexture matToOfTexture(cv::Mat* m, int glFormat);
 
 	//private
 	int width;
@@ -66,6 +69,13 @@ private:
 	cv::Mat maskDetail;
 	cv::Mat maskBase;
 	cv::Mat maskChroma;
+
+	ofTexture texMask;
+	ofTexture texMaskDetail;
+	ofTexture texMaskBase;
+	ofFbo fboMaskChroma;
+
+	//cv::Mat maskChroma;
 	cv::Mat red;
 	cv::Mat green;
 	cv::Mat blue;
@@ -75,9 +85,14 @@ private:
 
 	//greenkey color
 	ofColor bgColor;
+	bool useBgColor;
+	ofTexture bg;
 
 	//raw input data
 	cv::Mat input;
+	//gpu::GpuMat gpuInput;
+
+	ofShader chromaShader;
 };
 
 #endif // OFXGREENSCREEN_H

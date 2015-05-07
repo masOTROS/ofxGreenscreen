@@ -26,6 +26,9 @@ ofxGreenscreen::ofxGreenscreen():width(0), height(0) {
 	cropBottom = cropLeft = cropRight = cropTop = 0;
 
 	doBaseMask = doChromaMask = doDetailMask = doGreenSpill = true;
+
+	string shaderPath=ofToDataPath("../../../../../addons/ofxGreenscreen/shaders/chromaShader");
+	chromaShader.load(shaderPath);
 }
 
 ofxGreenscreen::~ofxGreenscreen() {
@@ -77,6 +80,8 @@ void ofxGreenscreen::setPixels(unsigned char* pixels, int w, int h) {
 		rect.height = h-cropBottom*h-rect.y;
 		input = input(rect);
 	}
+	fboMaskChroma.allocate(width, height, GL_LUMINANCE);
+	//fboMaskChroma.allocate(width, height);
 	update();
 }
 
@@ -142,46 +147,52 @@ void ofxGreenscreen::update() {
 
 	if(doGreenSpill || doChromaMask) {
 		//REMOVE GREEN SPILL with a multiply filter
-		Mat hsvInput;
-		cvtColor(input, hsvInput, CV_RGB2HSV);
+		//Mat hsvInput;
+		//cvtColor(input, hsvInput, CV_RGB2HSV);
+		//gpu::GpuMat gpuInput;
+		//gpuInput.download(input);
+
 
 		float amount = strengthGreenSpill*4;
 		float hue = ofMap(bgColor.getHue(), 0, 255, 0, 1);
-		for(int y=0; y < height; y++) {
-			for(int x=0; x < width; x++) {
-				float f =  sin( 2 * PI * ( hue + ( .25 - hsvInput.at<Vec3b>(y, x)[0]/180. )));
-				if(doChromaMask) {
-					float fi = f;
-					if(fi>1)
-						fi = 1;
-					if(fi<0)
-						fi = 0;
-					maskChroma.at<unsigned char>(y, x) = fi*255;
-				}
-				if(doGreenSpill) {
-					f = f * amount;
-					if(f<0)
-						f = 0;
-					else if(f>1)
-						f = 1;
-					hsvInput.at<Vec3b>(y, x)[1] *= 1-f;
-				}
-			}
-		}
 
-		if(doGreenSpill) {
-			cvtColor(hsvInput, input, CV_HSV2RGB);
-			split(input, rgbInput);
-			red = rgbInput[0];
-			green = rgbInput[1];
-			blue = rgbInput[2];
-		}
+		ofTexture texInput = matToOfTexture(&input);
+		//chromaShader.setUniformTexture("input", texInput, 1);
 
-		//work on the chroma mask
-		bitwise_not(maskChroma, maskChroma);
+		ofEnableNormalizedTexCoords(); //This lets you do 0-1 range
+		fboMaskChroma.begin();
+		// Cleaning everthing with alpha mask on 0 in order to make it transparent for default
+		ofClear(0); 
+    
+		chromaShader.begin();
+		chromaShader.setUniformTexture("input",texInput,1);
+		chromaShader.setUniform1f("amount",amount);
+		chromaShader.setUniform1f("backHue",hue);
+		chromaShader.setUniform1f("strengthChromaMask",strengthChromaMask);
+		chromaShader.setUniform1i("doChromaMask",doChromaMask);
+		chromaShader.setUniform1i("doGreenSpill",doGreenSpill);
+    
+		ofSetColor(255);
+		texInput.bind();
+		glBegin(GL_QUADS);
+		glTexCoord2f(0,0); glVertex3f(0,0,0);
+		glTexCoord2f(1,0); glVertex3f(width,0,0);
+		glTexCoord2f(1,1); glVertex3f(width,height,0);
+		glTexCoord2f(0,1); glVertex3f(0,height,0);
+		glEnd();
+		texInput.unbind();
+
+		chromaShader.end();
+		fboMaskChroma.end();
+		ofDisableNormalizedTexCoords(); //This lets you do 0-1 range
+		
+		ofPixels pix;
+		pix.allocate(width, height, OF_PIXELS_MONO);
+		fboMaskChroma.getTextureReference().readToPixels(pix);
+		maskChroma = Mat(height, width, DataType<unsigned char>::type);
+		Mat(height, width, DataType<unsigned char>::type, pix.getPixels()).copyTo(maskChroma);
+		mapImage(maskChroma, maskChroma, clipBlackChromaMask, clipWhiteChromaMask);
 		blur(maskChroma, maskChroma, cv::Size(5, 5));
-		maskChroma -= (1-strengthChromaMask)*255;
-		maskChroma *= strengthChromaMask;
 	}
 
 	//create the final mask
@@ -257,6 +268,18 @@ ofPixels matToOfPixels(Mat* m) {
 	return ret;
 }
 
+ofTexture ofxGreenscreen::matToOfTexture(Mat* m) {
+	ofTexture ret;
+	ret.loadData(matToOfPixels(m));
+	return ret;
+}
+
+ofTexture ofxGreenscreen::matToOfTexture(Mat* m, int glFormat) {
+	ofTexture ret;
+	ret.loadData(m->data, m->size[1], m->size[0], glFormat);
+	return ret;
+}
+
 ofPixels ofxGreenscreen::getBaseMask() {
 	return matToOfPixels(&maskBase);
 }
@@ -281,7 +304,7 @@ ofPixels ofxGreenscreen::getRedSub() {
 	return matToOfPixels(&redSub);
 }
 ofPixels ofxGreenscreen::getChromaMask() {
-	return matToOfPixels(&maskChroma);
+	return  matToOfPixels(&maskChroma);
 }
 
 void ofxGreenscreen::setCropLeft(float val) {
